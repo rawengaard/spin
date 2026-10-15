@@ -196,6 +196,10 @@ body{margin:0}[hidden]{display:none!important}
       </div>
     </div>
     <div class="actions">
+      <button class="btn primary" type="button" id="restart">Start på nytt</button>
+    </div>
+    <p class="hint" id="restartMsg">Nullstiller rekkefølgen til trinn 1, aktiverer alle felt igjen og fjerner siste trekning.</p>
+    <div class="actions">
       <button class="btn" type="button" id="reactivate">Aktiver alle felt</button>
       <button class="btn danger" type="button" id="delWheel">Slett hjulet</button>
     </div>
@@ -452,7 +456,6 @@ body{margin:0}[hidden]{display:none!important}
     else if (q.pos < q.order.length) st = 'Neste spinn gir trinn ' + (q.pos + 1) + ' av ' + q.order.length + '.';
     else st = q.after === 'loop' ? 'Neste spinn starter på trinn 1.' : 'Rekkefølgen er ferdig. Neste spinn er tilfeldig.';
     $('seqStatus').textContent = st;
-    $('seqReset').hidden = q.pos === 0;
   }
   function renderSettings() {
     var w = cur(); renderSeq();
@@ -540,6 +543,18 @@ body{margin:0}[hidden]{display:none!important}
     q.order.push(pick.id); save(); renderAll();
   });
   $('seqAfter').addEventListener('change', function () { cur().seq.after = $('seqAfter').value; save(); renderAll(); });
+  var restartDefault = $('restartMsg').textContent, restartTimer = null;
+  $('restart').addEventListener('click', function () {
+    var w = cur();
+    w.seq.pos = 0;
+    w.items.forEach(function (i) { i.active = true; });
+    result = null; clearTimeout(redrawTimer);
+    save(); renderAll();
+    var m = $('restartMsg');
+    m.textContent = 'Nullstilt. ' + (w.seq.on && w.seq.order.length ? 'Neste spinn gir trinn 1, og alle felt er på hjulet igjen.' : 'Alle felt er på hjulet igjen.');
+    clearTimeout(restartTimer);
+    restartTimer = setTimeout(function () { m.textContent = restartDefault; }, 5000);
+  });
   $('seqReset').addEventListener('click', function () { cur().seq.pos = 0; save(); renderAll(); });
   function reactivate() {
     cur().items.forEach(function (i) { i.active = true; });
