@@ -102,6 +102,16 @@ button { cursor: pointer; }
 .btn.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
 .hint { color: var(--muted); font-size: 0.85rem; margin: 0; }
 
+select { font: inherit; color: inherit; }
+.seq { display: flex; flex-direction: column; gap: 12px; padding: 12px; background: var(--surface-2); border-radius: 12px; min-width: 0; }
+.seq-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.seq-row { display: grid; grid-template-columns: 1.6rem minmax(0, 1fr) auto auto auto; gap: 6px; align-items: center; }
+.seq-row .n { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+.seq-row select, .field select { width: 100%; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+.seq-row .icon-btn { width: 36px; height: 36px; font-size: 1rem; background: var(--surface); }
+.seq-row .icon-btn:disabled { opacity: .35; cursor: default; }
+.seq-status { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 0.9rem; color: var(--muted); }
+.field select { background: var(--surface); }
 details.panel > summary { cursor: pointer; font-family: var(--font-display); font-weight: 700; list-style: none; display: flex; justify-content: space-between; align-items: center; }
 details.panel > summary::-webkit-details-marker { display: none; }
 details.panel > summary::after { content: "+"; color: var(--muted); font-size: 1.3rem; }
@@ -165,6 +175,26 @@ body{margin:0}[hidden]{display:none!important}
       <input class="switch" type="checkbox" id="autoOff">
       <span>Deaktiver feltet etter at det er trukket</span>
     </label>
+    <label class="check" for="seqOn">
+      <input class="switch" type="checkbox" id="seqOn">
+      <span>Bruk fast rekkefølge</span>
+    </label>
+    <div class="seq" id="seqBox" hidden>
+      <p class="hint">Første spinn gir trinn 1, andre spinn gir trinn 2, og så videre. Deaktiverte felt hoppes over.</p>
+      <ol class="seq-list" id="seqList"></ol>
+      <div class="actions"><button class="btn" type="button" id="seqAdd">+ Legg til trinn</button></div>
+      <div class="field">
+        <label for="seqAfter">Etter siste trinn</label>
+        <select id="seqAfter">
+          <option value="loop">Start på nytt fra trinn 1</option>
+          <option value="random">Trekk tilfeldig</option>
+        </select>
+      </div>
+      <div class="seq-status">
+        <span id="seqStatus"></span>
+        <button class="link" type="button" id="seqReset">Start fra trinn 1</button>
+      </div>
+    </div>
     <div class="actions">
       <button class="btn" type="button" id="reactivate">Aktiver alle felt</button>
       <button class="btn danger" type="button" id="delWheel">Slett hjulet</button>
@@ -197,8 +227,18 @@ body{margin:0}[hidden]{display:none!important}
   var reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   var $ = function (id) { return document.getElementById(id); };
   function uid() { return Math.random().toString(36).slice(2, 9); }
+  function ensureSeq(w) {
+    var q = w.seq && typeof w.seq === 'object' ? w.seq : {};
+    var ids = {};
+    w.items.forEach(function (i) { ids[i.id] = true; });
+    q.on = !!q.on;
+    q.order = Array.isArray(q.order) ? q.order.filter(function (id) { return ids[id]; }) : [];
+    q.pos = Math.max(0, Math.min(q.order.length, parseInt(q.pos, 10) || 0));
+    q.after = q.after === 'random' ? 'random' : 'loop';
+    w.seq = q; return w;
+  }
   function mk(name, texts, autoOff) {
-    return { id: uid(), name: name, autoOff: !!autoOff, items: texts.map(function (t) { return { id: uid(), text: t, active: true }; }) };
+    return ensureSeq({ id: uid(), name: name, autoOff: !!autoOff, items: texts.map(function (t) { return { id: uid(), text: t, active: true }; }) });
   }
   function seed() {
     var w = [
@@ -218,6 +258,7 @@ body{margin:0}[hidden]{display:none!important}
     d.wheels.forEach(function (w) {
       w.id = w.id || uid(); w.autoOff = !!w.autoOff;
       w.items.forEach(function (i) { i.id = i.id || uid(); i.active = i.active !== false; });
+      ensureSeq(w);
     });
     if (!d.wheels.some(function (w) { return w.id === d.current; })) d.current = d.wheels[0].id;
     return d;
@@ -236,6 +277,14 @@ body{margin:0}[hidden]{display:none!important}
     $('note').hidden = !memOnly;
   }
   function cur() { return state.wheels.filter(function (w) { return w.id === state.current; })[0]; }
+  function removeItem(w, it) {
+    w.items = w.items.filter(function (x) { return x !== it; });
+    var q = w.seq, before = q.order.length, kept = [], newPos = 0;
+    q.order.forEach(function (id, idx) {
+      if (id !== it.id) { kept.push(id); if (idx < q.pos) newPos++; }
+    });
+    q.order = kept; q.pos = newPos;
+  }
   function active(w) { return w.items.filter(function (i) { return i.active; }); }
 
   var rot = 0, spinning = false, result = null, redrawTimer = null;
@@ -322,13 +371,13 @@ body{margin:0}[hidden]{display:none!important}
       tx.setAttribute('aria-label', 'Navn på felt');
       tx.addEventListener('change', function () {
         var v = tx.value.trim();
-        if (!v) { w.items = w.items.filter(function (x) { return x !== it; }); } else { it.text = v; }
+        if (!v) { removeItem(w, it); } else { it.text = v; }
         save(); renderAll();
       });
       var del = document.createElement('button'); del.type = 'button'; del.className = 'icon-btn';
       del.textContent = '×'; del.setAttribute('aria-label', 'Fjern feltet ' + it.text);
       del.addEventListener('click', function () {
-        w.items = w.items.filter(function (x) { return x !== it; });
+        removeItem(w, it);
         if (result && result.itemId === it.id) result = null;
         save(); renderAll();
       });
@@ -365,8 +414,48 @@ body{margin:0}[hidden]{display:none!important}
       } else box.appendChild(div('answer', 'Trykk Spinn for å trekke et felt.'));
     }
   }
+  function renderSeq() {
+    var w = cur(), q = w.seq, box = $('seqBox'), ol = $('seqList');
+    $('seqOn').checked = q.on; box.hidden = !q.on; ol.textContent = '';
+    if (!q.on) return;
+    function label(it) { return it.text + (it.active ? '' : ' (av)'); }
+    q.order.forEach(function (id, idx) {
+      var li = document.createElement('li'); li.className = 'seq-row';
+      var n = document.createElement('span'); n.className = 'n'; n.textContent = (idx + 1) + '.';
+      var sel = document.createElement('select'); sel.setAttribute('aria-label', 'Trinn ' + (idx + 1));
+      w.items.forEach(function (it) {
+        var o = document.createElement('option'); o.value = it.id; o.textContent = label(it);
+        if (it.id === id) o.selected = true; sel.appendChild(o);
+      });
+      sel.addEventListener('change', function () { q.order[idx] = sel.value; save(); renderAll(); });
+      function btn(txt, aria, dis, fn) {
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'icon-btn';
+        b.textContent = txt; b.setAttribute('aria-label', aria); b.disabled = dis;
+        b.addEventListener('click', fn); return b;
+      }
+      var up = btn('↑', 'Flytt trinn ' + (idx + 1) + ' opp', idx === 0, function () {
+        var t = q.order[idx - 1]; q.order[idx - 1] = q.order[idx]; q.order[idx] = t; save(); renderAll();
+      });
+      var down = btn('↓', 'Flytt trinn ' + (idx + 1) + ' ned', idx === q.order.length - 1, function () {
+        var t = q.order[idx + 1]; q.order[idx + 1] = q.order[idx]; q.order[idx] = t; save(); renderAll();
+      });
+      var del = btn('×', 'Fjern trinn ' + (idx + 1), false, function () {
+        q.order.splice(idx, 1); if (q.pos > idx) q.pos--; save(); renderAll();
+      });
+      li.appendChild(n); li.appendChild(sel); li.appendChild(up); li.appendChild(down); li.appendChild(del);
+      ol.appendChild(li);
+    });
+    $('seqAdd').disabled = w.items.length === 0;
+    $('seqAfter').value = q.after;
+    var st;
+    if (!q.order.length) st = w.items.length ? 'Ingen trinn ennå. Hjulet trekker tilfeldig.' : 'Legg til felt først.';
+    else if (q.pos < q.order.length) st = 'Neste spinn gir trinn ' + (q.pos + 1) + ' av ' + q.order.length + '.';
+    else st = q.after === 'loop' ? 'Neste spinn starter på trinn 1.' : 'Rekkefølgen er ferdig. Neste spinn er tilfeldig.';
+    $('seqStatus').textContent = st;
+    $('seqReset').hidden = q.pos === 0;
+  }
   function renderSettings() {
-    var w = cur();
+    var w = cur(); renderSeq();
     if (document.activeElement !== $('nameInput')) $('nameInput').value = w.name;
     $('autoOff').checked = w.autoOff;
     resetDel();
@@ -378,13 +467,25 @@ body{margin:0}[hidden]{display:none!important}
   }
 
   /* ---------- spinn ---------- */
+  function pickIndex(w, act) {
+    var q = w.seq;
+    if (q.on && q.order.length) {
+      var len = q.order.length, tries = 0;
+      while (tries <= len) {
+        if (q.pos >= len) { if (q.after === 'loop') q.pos = 0; else break; }
+        var id = q.order[q.pos]; q.pos++; tries++;
+        for (var i = 0; i < act.length; i++) if (act[i].id === id) return i;
+      }
+    }
+    return Math.floor(Math.random() * act.length);
+  }
   function spin() {
     var w = cur(), act = active(w);
     if (spinning || !act.length) return;
     clearTimeout(redrawTimer);
     spinning = true; result = null; renderAll();
     var n = act.length, s = TAU / n;
-    var wi = Math.floor(Math.random() * n);
+    var wi = pickIndex(w, act); save();
     var c = (wi + 0.5) * s + (Math.random() - 0.5) * 0.7 * s;
     var base = (((-Math.PI / 2 - c) % TAU) + TAU) % TAU;
     var from = ((rot % TAU) + TAU) % TAU;
@@ -429,6 +530,17 @@ body{margin:0}[hidden]{display:none!important}
     if (!cur().name.trim()) { cur().name = 'Uten navn'; save(); renderAll(); }
   });
   $('autoOff').addEventListener('change', function () { cur().autoOff = $('autoOff').checked; save(); });
+  $('seqOn').addEventListener('change', function () {
+    var q = cur().seq; q.on = $('seqOn').checked; save(); renderAll();
+  });
+  $('seqAdd').addEventListener('click', function () {
+    var w = cur(), q = w.seq; if (!w.items.length) return;
+    var used = {}; q.order.forEach(function (id) { used[id] = true; });
+    var pick = w.items.filter(function (i) { return !used[i.id]; })[0] || w.items[0];
+    q.order.push(pick.id); save(); renderAll();
+  });
+  $('seqAfter').addEventListener('change', function () { cur().seq.after = $('seqAfter').value; save(); renderAll(); });
+  $('seqReset').addEventListener('click', function () { cur().seq.pos = 0; save(); renderAll(); });
   function reactivate() {
     cur().items.forEach(function (i) { i.active = true; });
     if (result) result.removed = false;
